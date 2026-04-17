@@ -24,6 +24,25 @@ git clone https://github.com/Ansub/wiki-os.git wiki-os && cd wiki-os && npm run 
 
 WikiOS will open in your browser and guide you through choosing a vault. You can also use the bundled demo vault on first run.
 
+WikiOS setup and maintenance commands now run through Node-based helpers, so the same commands work on Windows, macOS, and Linux.
+
+### Docker
+
+Run the bundled demo vault in Docker:
+
+```bash
+docker compose up --build
+```
+
+The container uses the sample vault from `sample-vault/` by default. To point it at your own vault, change the `/vault` volume mount and the `WIKI_ROOT` environment variable in `docker-compose.yml`.
+
+For a direct build and run:
+
+```bash
+docker build -t wiki-os .
+docker run --rm -p 5211:5211 -e WIKI_ROOT=/vault -v /path/to/your/vault:/vault:ro -v wiki-os-data:/data wiki-os
+```
+
 ## Features
 
 - Homepage with featured notes, recent notes, and people highlights
@@ -63,9 +82,14 @@ npm run dev
 
 ### Useful commands
 
+- `npm run first-run` installs dependencies and starts the guided first-run flow
+- `npm start` starts the app in user mode
+- `npm run dev` starts the contributor split client/server setup
 - `npm run build` builds the client and server
 - `npm run serve` runs the already-built server
+- `npm run deploy` runs the deployment helper
 - `npm run smoke-test` runs the smoke test helper
+- `docker compose up --build` runs the app in Docker with the bundled demo vault
 
 ### Environment variables
 

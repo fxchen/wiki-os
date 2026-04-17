@@ -1,0 +1,272 @@
+#!/usr/bin/env node
+
+import { appendFile, mkdir, writeFile } from "node:fs/promises";
+import { spawn } from "node:child_process";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const repoRoot = path.resolve(__dirname, "..");
+const appName = "WikiOS";
+const baseUrl = process.env.WIKIOS_BASE_URL ?? "http://localhost:5211";
+const restartCommand = process.env.WIKIOS_RESTART_COMMAND ?? "";
+const stateDir = path.resolve(process.env.XDG_STATE_HOME ?? path.join(process.env.USERPROFILE ?? process.env.HOME ?? repoRoot, ".local", "state"), "wiki-os");
+const logDir = path.join(stateDir, "logs");
+const deployLog = path.join(logDir, "deploy.log");
+const MAX_CAPTURED_LINES = 400;
+const HEALTH_REQUEST_TIMEOUT_MS = 2_000;
+const ALLOWED_FLAGS = new Set(["--skip-pull", "--skip-install", "--skip-restart", "--skip-smoke"]);
+
+function timestamp() {
+  return new Date().toLocaleTimeString("en-GB", { hour12: false });
+}
+
+async function log(message) {
+  const line = `[${timestamp()}] ${message}`;
+  console.log(line);
+  await appendFile(deployLog, `${line}\n`, "utf8");
+}
+
+async function fail(message) {
+  await log(`FATAL: ${message}`);
+  process.exit(1);
+}
+
+function errorMessage(error, fallback) {
+  return error instanceof Error ? error.message : fallback;
+}
+
+function parseFlags(argv) {
+  const flags = new Set(argv);
+
+  for (const flag of flags) {
+    if (!ALLOWED_FLAGS.has(flag)) {
+      throw new Error(`Unknown option: ${flag}`);
+    }
+  }
+
+  return {
+    skipPull: flags.has("--skip-pull"),
+    skipInstall: flags.has("--skip-install"),
+    skipRestart: flags.has("--skip-restart"),
+    skipSmoke: flags.has("--skip-smoke"),
+  };
+}
+
+function npmCommand() {
+  if (process.env.npm_execpath) {
+    return {
+      command: process.env.npm_node_execpath ?? process.execPath,
+      args: [process.env.npm_execpath],
+    };
+  }
+
+  return {
+    command: process.platform === "win32" ? "npm.cmd" : "npm",
+    args: [],
+  };
+}
+
+function run(command, args, options = {}) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, {
+      cwd: repoRoot,
+      env: { ...process.env, ...options.env },
+      shell: options.shell ?? false,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+
+    const capturedLines = [];
+    let pending = "";
+
+    const collect = (chunk) => {
+      pending += chunk.toString();
+      const lines = pending.split(/\r?\n/);
+      pending = lines.pop() ?? "";
+      if (lines.length > 0) {
+        capturedLines.push(...lines);
+        if (capturedLines.length > MAX_CAPTURED_LINES) {
+          capturedLines.splice(0, capturedLines.length - MAX_CAPTURED_LINES);
+        }
+      }
+    };
+
+    child.stdout?.on("data", collect);
+    child.stderr?.on("data", collect);
+
+    child.on("error", reject);
+    child.on("exit", (code) => {
+      if (pending) {
+        capturedLines.push(pending);
+      }
+
+      const output = capturedLines.join("\n");
+
+      if (code === 0) {
+        resolve(output);
+        return;
+      }
+
+      reject(
+        new Error(
+          `${command} ${args.join(" ")} exited with code ${code ?? 1}${output ? `\n${output}` : ""}`,
+        ),
+      );
+    });
+  });
+}
+
+async function runNpm(args, options = {}) {
+  const npm = npmCommand();
+  return run(npm.command, [...npm.args, ...args], { ...options, shell: npm.args.length === 0 && process.platform === "win32" });
+}
+
+async function waitForHealth() {
+  for (let attempt = 1; attempt <= 20; attempt += 1) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), HEALTH_REQUEST_TIMEOUT_MS);
+
+    try {
+      const response = await fetch(`${baseUrl}/api/health`, { signal: controller.signal });
+      if (response.ok) {
+        await log(`Health endpoint is up (took ${attempt}s)`);
+        return;
+      }
+    } catch {
+      // Keep retrying until timeout.
+    } finally {
+      clearTimeout(timeout);
+    }
+
+    if (attempt === 20) {
+      throw new Error(`Health endpoint did not come up within 20 seconds (${baseUrl}/api/health)`);
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+  }
+}
+
+async function main() {
+  const { skipPull, skipInstall, skipRestart, skipSmoke } = parseFlags(process.argv.slice(2));
+
+  await mkdir(logDir, { recursive: true });
+  await writeFile(deployLog, "", "utf8");
+
+  await log("═══════════════════════════════════════");
+  await log(`${appName} deploy started`);
+  await log("═══════════════════════════════════════");
+
+  if (!skipPull) {
+    await log("Pulling latest from origin/main...");
+    try {
+      await run("git", ["pull", "origin", "main", "--ff-only"]);
+    } catch (error) {
+      await fail(`git pull failed — resolve conflicts first\n${errorMessage(error, "git pull failed")}`);
+    }
+  } else {
+    await log("Skipping git pull (--skip-pull)");
+  }
+
+  const commit = (await run("git", ["rev-parse", "--short", "HEAD"])).trim();
+  const commitFull = (await run("git", ["rev-parse", "HEAD"])).trim();
+  const deployedAt = new Date().toISOString();
+  await log(`Commit: ${commit}`);
+
+  if (!skipInstall) {
+    await log("Installing dependencies...");
+    try {
+      const output = await runNpm(["install", "--prefer-offline"]);
+      const lines = output.trim().split(/\r?\n/).filter(Boolean);
+      await appendFile(deployLog, `${lines.slice(-3).join("\n")}${lines.length ? "\n" : ""}`, "utf8");
+    } catch (error) {
+      await fail(`npm install failed\n${errorMessage(error, "npm install failed")}`);
+    }
+  } else {
+    await log("Skipping npm install (--skip-install)");
+  }
+
+  await log("Building app...");
+  try {
+    const output = await runNpm(["run", "build"]);
+    const lines = output.trim().split(/\r?\n/).filter(Boolean);
+    await appendFile(deployLog, `${lines.slice(-8).join("\n")}${lines.length ? "\n" : ""}`, "utf8");
+  } catch (error) {
+    await fail(`Build failed\n${errorMessage(error, "Build failed")}`);
+  }
+
+  await writeFile(
+    path.join(repoRoot, "version.json"),
+    JSON.stringify(
+      {
+        commit: commitFull,
+        commitShort: commit,
+        deployedAt,
+      },
+      null,
+      2,
+    ) + "\n",
+    "utf8",
+  );
+  await log(`Version file written (${commit})`);
+
+  if (!skipRestart) {
+    if (restartCommand) {
+      await log("Running restart command...");
+      try {
+        if (process.platform === "win32") {
+          await run(restartCommand, [], { shell: true });
+        } else {
+          await run("bash", ["-lc", restartCommand]);
+        }
+      } catch (error) {
+        await fail(`restart command failed\n${errorMessage(error, "restart command failed")}`);
+      }
+    } else {
+      await log("No WIKIOS_RESTART_COMMAND configured; restart your process manager manually if needed.");
+    }
+  } else {
+    await log("Skipping service restart (--skip-restart)");
+  }
+
+  if (!skipSmoke) {
+    await log("Waiting for health endpoint...");
+    try {
+      await waitForHealth();
+    } catch (error) {
+      await fail(error instanceof Error ? error.message : "Health check failed");
+    }
+
+    await log("Running smoke tests...");
+    try {
+      await run(process.execPath, [path.join(__dirname, "smoke-test.mjs")], {
+        env: {
+          ...process.env,
+          WIKIOS_BASE_URL: baseUrl,
+        },
+      });
+      await log("═══════════════════════════════════════");
+      await log(`Deploy complete ✓  (${commit})`);
+      await log("═══════════════════════════════════════");
+    } catch (error) {
+      await log("═══════════════════════════════════════");
+      await log(`DEPLOY FAILED — smoke tests did not pass\n${errorMessage(error, "Smoke tests failed")}`);
+      await log(`Check: ${deployLog}`);
+      await log("═══════════════════════════════════════");
+      process.exit(1);
+    }
+  } else {
+    await log("Skipping smoke tests (--skip-smoke)");
+    await log(`Deploy complete ✓  (${commit})`);
+  }
+}
+
+main().catch(async (error) => {
+  const message = error instanceof Error ? error.message : "deploy failed";
+  console.error(message);
+  try {
+    await appendFile(deployLog, `${message}\n`, "utf8");
+  } catch {
+    // Ignore log write failures during fatal exit.
+  }
+  process.exit(1);
+});

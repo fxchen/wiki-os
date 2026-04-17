@@ -41,14 +41,27 @@ export async function quarantineCorruptIndexFiles(indexDbPath: string, timestamp
   const paths = [indexDbPath, `${indexDbPath}-wal`, `${indexDbPath}-shm`];
 
   for (const filePath of paths) {
-    try {
-      await fs.rename(filePath, `${filePath}.corrupt-${timestampMs}`);
-    } catch (error) {
-      if (error instanceof Error && "code" in error && error.code === "ENOENT") {
-        continue;
-      }
+    for (let attempts = 0; attempts < 5; attempts++) {
+      try {
+        await fs.rename(filePath, `${filePath}.corrupt-${timestampMs}`);
+        break;
+      } catch (error) {
+        if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+          break;
+        }
 
-      throw error;
+        if (attempts < 4) {
+          await new Promise((resolve) => setTimeout(resolve, 50 * Math.pow(2, attempts)));
+          continue;
+        }
+
+        if (filePath !== indexDbPath) {
+          console.warn(`Failed to quarantine sidecar file ${filePath}:`, error);
+          break;
+        }
+
+        throw error;
+      }
     }
   }
 }

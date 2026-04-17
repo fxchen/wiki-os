@@ -49,6 +49,9 @@ describe("wiki startup self-heal", () => {
       expect(
         tempFiles.some((fileName) => fileName.startsWith("index.sqlite.corrupt-")),
       ).toBe(true);
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (globalThis as any)[cacheKey]?.db?.close();
     } finally {
       await rm(tempDir, { recursive: true, force: true });
     }

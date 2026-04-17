@@ -1,0 +1,31 @@
+name: wiki-os
+
+services:
+  wiki-os-init:
+    image: busybox:1.36
+    user: "0:0"
+    command: ["sh", "-c", "chown -R 1000:1000 /data"]
+    volumes:
+      - wiki-os-data:/data
+
+  wiki-os:
+    container_name: wiki-os-app
+    build:
+      context: .
+    depends_on:
+      wiki-os-init:
+        condition: service_completed_successfully
+    ports:
+      - "5211:5211"
+    environment:
+      HOST: 0.0.0.0
+      PORT: 5211
+      HOME: /data
+      WIKI_ROOT: /vault
+      WIKIOS_OPEN_BROWSER: "0"
+    volumes:
+      - ./sample-vault:/vault:ro
+      - wiki-os-data:/data
+
+volumes:
+  wiki-os-data:

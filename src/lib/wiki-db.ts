@@ -99,7 +99,12 @@ export function applyDbPragmas(db: SqliteDb) {
 
 export function openIndexDb(indexDbPath: string) {
   const db = new Database(indexDbPath);
-  applyDbPragmas(db);
+  try {
+    applyDbPragmas(db);
+  } catch (error) {
+    db.close();
+    throw error;
+  }
   return db;
 }
 

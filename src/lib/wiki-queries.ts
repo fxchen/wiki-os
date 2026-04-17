@@ -327,16 +327,6 @@ export async function getDerivedData(deps: WikiQueryDependencies): Promise<Deriv
     .filter((page): page is PageSummary => page !== undefined)
     .sort((a, b) => b.backlinkCount - a.backlinkCount || a.title.localeCompare(b.title));
 
-  const emptySummary: PageSummary = {
-    file: "",
-    slug: "",
-    title: "No pages yet",
-    summary: "",
-    backlinkCount: 0,
-    wordCount: 0,
-    modifiedAt: 0,
-  };
-
   const derivedData: DerivedData = {
     stats: {
       total_pages: totals.totalPages,
