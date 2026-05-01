@@ -87,6 +87,7 @@ export interface WikiIndexerDbDependencies<TDb> extends WikiIndexerRuntimeDepend
   deletePageByFile: (db: TDb, file: string) => boolean;
   selectPageModifiedAt: (db: TDb, file: string) => number | undefined;
   listIndexedPages: (db: TDb) => Array<{ file: string; modifiedAt: number }>;
+  reconcileBacklinkSlugs: (db: TDb) => void;
 }
 
 export interface WikiIndexerSyncDependencies {
@@ -284,15 +285,23 @@ export async function syncSinglePath<TDb, TConfig>(
     return false;
   }
 
+  const finishWithDelete = (): boolean => {
+    const removed = deps.deletePageByFile(db, normalizedPath);
+    if (removed) {
+      deps.reconcileBacklinkSlugs(db);
+    }
+    return removed;
+  };
+
   if (!deps.shouldIndexRelativeFile(normalizedPath)) {
-    return deps.deletePageByFile(db, normalizedPath);
+    return finishWithDelete();
   }
 
   const absolutePath = path.join(wikiRoot, normalizedPath);
   try {
     const stat = await fs.stat(absolutePath);
     if (!stat.isFile()) {
-      return deps.deletePageByFile(db, normalizedPath);
+      return finishWithDelete();
     }
 
     const existingModifiedAt = deps.selectPageModifiedAt(db, normalizedPath);
@@ -302,14 +311,15 @@ export async function syncSinglePath<TDb, TConfig>(
 
     const page = await loadIndexedWikiPage(normalizedPath, deps, stat.mtimeMs);
     if (!page) {
-      return deps.deletePageByFile(db, normalizedPath);
+      return finishWithDelete();
     }
 
     deps.upsertPageRecord(db, page);
+    deps.reconcileBacklinkSlugs(db);
     return true;
   } catch (error) {
     if (isMissingPathError(error)) {
-      return deps.deletePageByFile(db, normalizedPath);
+      return finishWithDelete();
     }
 
     throw error;
@@ -367,6 +377,7 @@ export async function reconcileIndexWithDisk<TDb, TConfig>(
     }
 
     if (upserted > 0 || deleted > 0) {
+      deps.reconcileBacklinkSlugs(db);
       deps.markRevisionChanged?.();
     }
 

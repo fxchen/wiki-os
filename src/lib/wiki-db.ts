@@ -1,8 +1,8 @@
 import Database from "better-sqlite3";
 
-import type { WikiHeading } from "./wiki-shared";
+import { slugFromFileName, type WikiHeading } from "./wiki-shared";
 
-export const DEFAULT_WIKI_INDEX_CACHE_VERSION = 4;
+export const DEFAULT_WIKI_INDEX_CACHE_VERSION = 5;
 export const REQUIRED_INDEX_TABLES = ["pages", "backlinks", "categories", "pages_fts"] as const;
 
 export type SqliteDb = Database.Database;
@@ -67,17 +67,56 @@ function reportIntegrityCheck(
   options?.onResult?.(ok, error);
 }
 
-function aggregateBacklinkReferences(
+export interface BasenameSlugMap {
+  bareToSlug: Map<string, string>;
+}
+
+function lastSlugSegment(slug: string): string {
+  const idx = slug.lastIndexOf("/");
+  return idx === -1 ? slug : slug.slice(idx + 1);
+}
+
+export function buildBasenameSlugMap(db: SqliteDb): BasenameSlugMap {
+  const rows = db.prepare("SELECT slug FROM pages").all() as Array<{ slug: string }>;
+  const sorted = rows.slice().sort((a, b) => {
+    const depthA = a.slug.split("/").length;
+    const depthB = b.slug.split("/").length;
+    if (depthA !== depthB) return depthA - depthB;
+    return a.slug.localeCompare(b.slug);
+  });
+  const bareToSlug = new Map<string, string>();
+  for (const row of sorted) {
+    const key = lastSlugSegment(row.slug).toLowerCase();
+    if (!bareToSlug.has(key)) {
+      bareToSlug.set(key, row.slug);
+    }
+  }
+  return { bareToSlug };
+}
+
+export function resolveBacklinkTargetSlug(
+  rawTargetSlug: string,
+  basenameMap: BasenameSlugMap,
+): string {
+  if (rawTargetSlug.includes("/")) {
+    return rawTargetSlug;
+  }
+  return basenameMap.bareToSlug.get(rawTargetSlug.toLowerCase()) ?? rawTargetSlug;
+}
+
+function aggregateResolvedBacklinkReferences(
   references: BacklinkReferenceRecord[],
+  basenameMap: BasenameSlugMap,
 ): Map<string, { targetRaw: string; count: number }> {
   const targets = new Map<string, { targetRaw: string; count: number }>();
 
   for (const reference of references) {
-    const existing = targets.get(reference.targetSlug);
+    const resolvedSlug = resolveBacklinkTargetSlug(reference.targetSlug, basenameMap);
+    const existing = targets.get(resolvedSlug);
     if (existing) {
       existing.count += 1;
     } else {
-      targets.set(reference.targetSlug, { targetRaw: reference.targetRaw, count: 1 });
+      targets.set(resolvedSlug, { targetRaw: reference.targetRaw, count: 1 });
     }
   }
 
@@ -279,7 +318,8 @@ export function upsertPageRecord(db: SqliteDb, page: IndexedWikiPageRecord) {
     .prepare("SELECT slug FROM pages WHERE file = ?")
     .get(page.file) as { slug: string } | undefined;
   const previousTargets = getSourceTargets(db, page.file);
-  const backlinkTargets = aggregateBacklinkReferences(page.backlinkReferences);
+
+  let resolvedTargets: Map<string, { targetRaw: string; count: number }> = new Map();
 
   const upsert = db.transaction(() => {
     db.prepare(`
@@ -332,12 +372,15 @@ export function upsertPageRecord(db: SqliteDb, page: IndexedWikiPageRecord) {
       JSON.stringify(page.categoryNames),
     );
 
+    const basenameMap = buildBasenameSlugMap(db);
+    resolvedTargets = aggregateResolvedBacklinkReferences(page.backlinkReferences, basenameMap);
+
     db.prepare("DELETE FROM backlinks WHERE source_file = ?").run(page.file);
     const insertBacklink = db.prepare(`
       INSERT INTO backlinks (source_file, target_raw, target_slug, occurrence_count)
       VALUES (?, ?, ?, ?)
     `);
-    for (const [targetSlug, target] of backlinkTargets) {
+    for (const [targetSlug, target] of resolvedTargets) {
       insertBacklink.run(page.file, target.targetRaw, targetSlug, target.count);
     }
 
@@ -350,12 +393,64 @@ export function upsertPageRecord(db: SqliteDb, page: IndexedWikiPageRecord) {
 
   upsert();
 
-  const affectedSlugs = new Set<string>([page.slug, ...previousTargets, ...backlinkTargets.keys()]);
+  const affectedSlugs = new Set<string>([page.slug, ...previousTargets, ...resolvedTargets.keys()]);
   if (previousPage?.slug) {
     affectedSlugs.add(previousPage.slug);
   }
 
   recomputeBacklinkCountsForSlugs(db, affectedSlugs);
+}
+
+export function reconcileBacklinkSlugs(db: SqliteDb): void {
+  const basenameMap = buildBasenameSlugMap(db);
+
+  const rows = db
+    .prepare(`
+      SELECT source_file AS sourceFile, target_raw AS targetRaw, target_slug AS targetSlug,
+             occurrence_count AS occurrenceCount
+      FROM backlinks
+      WHERE target_raw NOT LIKE '%/%'
+    `)
+    .all() as Array<{
+      sourceFile: string;
+      targetRaw: string;
+      targetSlug: string;
+      occurrenceCount: number;
+    }>;
+
+  const affectedSlugs = new Set<string>();
+
+  const apply = db.transaction(() => {
+    const upsert = db.prepare(`
+      INSERT INTO backlinks (source_file, target_raw, target_slug, occurrence_count)
+      VALUES (?, ?, ?, ?)
+      ON CONFLICT(source_file, target_slug) DO UPDATE SET
+        occurrence_count = backlinks.occurrence_count + excluded.occurrence_count,
+        target_raw = excluded.target_raw
+    `);
+    const remove = db.prepare(
+      "DELETE FROM backlinks WHERE source_file = ? AND target_slug = ?",
+    );
+
+    for (const row of rows) {
+      const bareSlug = slugFromFileName(`${row.targetRaw}.md`);
+      const expectedSlug = resolveBacklinkTargetSlug(bareSlug, basenameMap);
+      if (row.targetSlug === expectedSlug) {
+        continue;
+      }
+
+      affectedSlugs.add(row.targetSlug);
+      affectedSlugs.add(expectedSlug);
+
+      upsert.run(row.sourceFile, row.targetRaw, expectedSlug, row.occurrenceCount);
+      remove.run(row.sourceFile, row.targetSlug);
+    }
+  });
+  apply();
+
+  if (affectedSlugs.size > 0) {
+    recomputeBacklinkCountsForSlugs(db, affectedSlugs);
+  }
 }
 
 export function deletePageByFile(db: SqliteDb, file: string) {
