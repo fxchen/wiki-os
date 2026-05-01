@@ -479,13 +479,19 @@ export function extractBacklinkReferences(markdown: string): BacklinkReference[]
 
   while ((match = linkRegex.exec(markdown)) !== null) {
     const rawTarget = match[1].trim().replace(/^sources\//, "");
-    if (!rawTarget) {
+    if (!rawTarget || rawTarget.startsWith("#")) {
       continue;
     }
 
-    const targetFile = rawTarget.endsWith(".md") ? rawTarget : `${rawTarget}.md`;
+    const anchorIndex = rawTarget.indexOf("#");
+    const pageTarget = anchorIndex === -1 ? rawTarget : rawTarget.slice(0, anchorIndex);
+    if (!pageTarget) {
+      continue;
+    }
+
+    const targetFile = pageTarget.endsWith(".md") ? pageTarget : `${pageTarget}.md`;
     references.push({
-      targetRaw: rawTarget,
+      targetRaw: pageTarget,
       targetSlug: slugFromFileName(targetFile),
     });
   }

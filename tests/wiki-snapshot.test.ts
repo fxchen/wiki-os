@@ -303,6 +303,88 @@ describe("wiki snapshot", () => {
     }
   });
 
+  it("resolves bare-name wikilinks to nested files", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "wiki-ui-"));
+
+    try {
+      await mkdir(path.join(root, "System"), { recursive: true });
+      await mkdir(path.join(root, "Knowledge", "people"), { recursive: true });
+
+      await writeFile(
+        path.join(root, "CULTURE.md"),
+        "# Culture\n\nWe care about [[onboarding]] and [[adaggio-barone]]. See [[onboarding#process]] too.\n",
+      );
+      await writeFile(
+        path.join(root, "System", "onboarding.md"),
+        "# Onboarding\n\nHow we welcome new teammates.\n\n## Process\nSteps go here.\n",
+      );
+      await writeFile(
+        path.join(root, "Knowledge", "people", "adaggio-barone.md"),
+        "# Adaggio Barone\n\nA teammate.\n",
+      );
+
+      const wiki = await loadWikiModule(root);
+      const homepage = await wiki.getHomepageData();
+      const onboarding = await wiki.getWikiPage(["System", "onboarding"]);
+      const adaggio = await wiki.getWikiPage(["Knowledge", "people", "adaggio-barone"]);
+
+      expect(onboarding.neighbors.map((n) => n.slug)).toContain("CULTURE");
+      expect(adaggio.neighbors.map((n) => n.slug)).toContain("CULTURE");
+
+      const onboardingSummary = homepage.topConnected.find(
+        (page) => page.file === "System/onboarding.md",
+      );
+      expect(onboardingSummary?.backlinkCount).toBe(2);
+
+      const adaggioSummary = homepage.people.find(
+        (person) => person.file === "Knowledge/people/adaggio-barone.md",
+      );
+      expect(adaggioSummary?.backlinkCount).toBe(1);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("re-resolves bare-name wikilinks when a root-level file is added later", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "wiki-ui-"));
+
+    try {
+      await mkdir(path.join(root, "System"), { recursive: true });
+
+      await writeFile(
+        path.join(root, "CULTURE.md"),
+        "# Culture\n\nSee [[onboarding]] for details.\n",
+      );
+      await writeFile(
+        path.join(root, "System", "onboarding.md"),
+        "# Onboarding (deep)\n\nNested onboarding doc.\n",
+      );
+
+      const wiki = await loadWikiModule(root);
+      const initial = await wiki.getHomepageData();
+      const initialNested = initial.topConnected.find(
+        (page) => page.file === "System/onboarding.md",
+      );
+      expect(initialNested?.backlinkCount).toBe(1);
+
+      await writeFile(
+        path.join(root, "onboarding.md"),
+        "# Onboarding (root)\n\nRoot-level onboarding doc.\n",
+      );
+
+      const stats = await wiki.reindexWikiSnapshot();
+      expect(stats.total_pages).toBe(3);
+
+      const after = await wiki.getHomepageData();
+      const nested = after.topConnected.find((page) => page.file === "System/onboarding.md");
+      const flat = after.topConnected.find((page) => page.file === "onboarding.md");
+      expect(nested?.backlinkCount ?? 0).toBe(0);
+      expect(flat?.backlinkCount).toBe(1);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("applies local per-vault person overrides without editing the vault", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "wiki-ui-"));
     const setupConfigPath = path.join(root, ".wiki-os-config.json");

@@ -17,6 +17,7 @@ import {
 import {
   deletePageByFile,
   openIndexDb,
+  reconcileBacklinkSlugs,
   runDbMigrations,
   runStartupIntegrityCheck,
   seedCategoryRules,
@@ -243,6 +244,7 @@ const indexer = createWikiIndexer<SqliteDb, WikiOsConfig>({
       file: string;
       modifiedAt: number;
     }>,
+  reconcileBacklinkSlugs,
   markRevisionChanged,
   recordSyncSuccess,
   recordSyncError,
