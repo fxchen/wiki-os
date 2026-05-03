@@ -3,6 +3,7 @@ export const HOMEPAGE_SECTION_KEYS = [
   "topConnected",
   "people",
   "recentPages",
+  "projects",
 ] as const;
 
 export type HomepageSectionKey = (typeof HOMEPAGE_SECTION_KEYS)[number];
@@ -26,6 +27,7 @@ export interface WikiOsConfigInput {
     articlesLabel?: string;
     conceptsLabel?: string;
     connectionsLabel?: string;
+    headerLinks?: Array<{ label: string; href: string }>;
   };
   homepage?: {
     sectionOrder?: HomepageSectionKey[];
@@ -34,6 +36,7 @@ export interface WikiOsConfigInput {
       topConnected?: string;
       people?: string;
       recentPages?: string;
+      projects?: string;
       spotlightBadge?: string;
       statsEyebrow?: string;
       statsDescription?: string;
@@ -56,6 +59,13 @@ export interface WikiOsConfigInput {
     folderNames?: string[];
     tagNames?: string[];
   };
+  projects?: {
+    path?: string;
+    indexFile?: string;
+    activeStatuses?: string[];
+    statusFrontmatterKey?: string;
+    maxOnDeck?: number;
+  };
 }
 
 export interface WikiOsConfig {
@@ -69,6 +79,7 @@ export interface WikiOsConfig {
     articlesLabel: string;
     conceptsLabel: string;
     connectionsLabel: string;
+    headerLinks: Array<{ label: string; href: string }>;
   };
   homepage: {
     sectionOrder: HomepageSectionKey[];
@@ -77,6 +88,7 @@ export interface WikiOsConfig {
       topConnected: string;
       people: string;
       recentPages: string;
+      projects: string;
       spotlightBadge: string;
       statsEyebrow: string;
       statsDescription: string;
@@ -99,6 +111,13 @@ export interface WikiOsConfig {
     folderNames: string[];
     tagNames: string[];
   };
+  projects: {
+    path: string;
+    indexFile: string;
+    activeStatuses: string[];
+    statusFrontmatterKey: string;
+    maxOnDeck: number;
+  };
 }
 
 export const DEFAULT_WIKI_OS_CONFIG: WikiOsConfig = {
@@ -112,6 +131,7 @@ export const DEFAULT_WIKI_OS_CONFIG: WikiOsConfig = {
     articlesLabel: "articles",
     conceptsLabel: "concepts",
     connectionsLabel: "connections",
+    headerLinks: [],
   },
   homepage: {
     sectionOrder: [...HOMEPAGE_SECTION_KEYS],
@@ -120,6 +140,7 @@ export const DEFAULT_WIKI_OS_CONFIG: WikiOsConfig = {
       topConnected: "Most Connected",
       people: "People",
       recentPages: "Recently Added",
+      projects: "Projects on-deck",
       spotlightBadge: "Spotlight",
       statsEyebrow: "Wiki Snapshot",
       statsDescription: "A live view of the Obsidian wiki index and backlink graph.",
@@ -141,6 +162,13 @@ export const DEFAULT_WIKI_OS_CONFIG: WikiOsConfig = {
     frontmatterKeys: ["person", "people", "type", "kind", "entity"],
     folderNames: ["people", "person", "biographies", "biography"],
     tagNames: ["person", "people", "biography", "biographies"],
+  },
+  projects: {
+    path: "",
+    indexFile: "_index.md",
+    activeStatuses: ["active", "on-deck", "in-progress"],
+    statusFrontmatterKey: "status",
+    maxOnDeck: 6,
   },
 };
 
@@ -246,6 +274,12 @@ export function resolveWikiOsConfig(input?: WikiOsConfigInput): WikiOsConfig {
       connectionsLabel:
         input?.navigation?.connectionsLabel?.trim() ||
         DEFAULT_WIKI_OS_CONFIG.navigation.connectionsLabel,
+      headerLinks: (input?.navigation?.headerLinks ?? DEFAULT_WIKI_OS_CONFIG.navigation.headerLinks)
+        .map((link) => ({
+          label: link?.label?.trim() ?? "",
+          href: link?.href?.trim() ?? "",
+        }))
+        .filter((link) => link.label.length > 0 && link.href.length > 0),
     },
     homepage: {
       sectionOrder:
@@ -265,6 +299,9 @@ export function resolveWikiOsConfig(input?: WikiOsConfigInput): WikiOsConfig {
         recentPages:
           input?.homepage?.labels?.recentPages?.trim() ||
           DEFAULT_WIKI_OS_CONFIG.homepage.labels.recentPages,
+        projects:
+          input?.homepage?.labels?.projects?.trim() ||
+          DEFAULT_WIKI_OS_CONFIG.homepage.labels.projects,
         spotlightBadge:
           input?.homepage?.labels?.spotlightBadge?.trim() ||
           DEFAULT_WIKI_OS_CONFIG.homepage.labels.spotlightBadge,
@@ -310,6 +347,23 @@ export function resolveWikiOsConfig(input?: WikiOsConfigInput): WikiOsConfig {
       tagNames: uniqueStrings(
         input?.people?.tagNames ?? DEFAULT_WIKI_OS_CONFIG.people.tagNames,
       ).map(normalizeTopicKey),
+    },
+    projects: {
+      path:
+        input?.projects?.path?.trim().replace(/^\/+|\/+$/g, "") ??
+        DEFAULT_WIKI_OS_CONFIG.projects.path,
+      indexFile:
+        input?.projects?.indexFile?.trim() || DEFAULT_WIKI_OS_CONFIG.projects.indexFile,
+      activeStatuses: uniqueStrings(
+        input?.projects?.activeStatuses ?? DEFAULT_WIKI_OS_CONFIG.projects.activeStatuses,
+      ).map((value) => value.toLowerCase()),
+      statusFrontmatterKey:
+        input?.projects?.statusFrontmatterKey?.trim().toLowerCase() ||
+        DEFAULT_WIKI_OS_CONFIG.projects.statusFrontmatterKey,
+      maxOnDeck: Math.max(
+        1,
+        Math.floor(input?.projects?.maxOnDeck ?? DEFAULT_WIKI_OS_CONFIG.projects.maxOnDeck),
+      ),
     },
   };
 }

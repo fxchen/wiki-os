@@ -69,6 +69,15 @@ export function Component() {
             </span>
             <span className="hidden sm:inline">articles</span>
           </span>
+          {config.navigation.headerLinks.map((link) => (
+            <Link
+              key={link.href}
+              to={link.href}
+              className="surface rounded-full px-3.5 py-2 text-sm font-medium text-[var(--foreground)] transition-[transform] duration-200 ease-[cubic-bezier(0.23,1,0.32,1)] active:scale-[0.96] sm:px-4"
+            >
+              {link.label}
+            </Link>
+          ))}
           <span className="rounded-full bg-[var(--foreground)] px-3.5 py-2 text-sm font-medium text-[var(--background)] sm:px-4">
             {config.navigation.statsLabel}
           </span>

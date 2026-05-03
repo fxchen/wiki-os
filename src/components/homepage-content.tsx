@@ -2,7 +2,11 @@ import { useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 
 import { useWikiConfig } from "@/client/wiki-config";
-import { type HomepageData, type PageSummary } from "@/lib/wiki-shared";
+import {
+  type HomepageData,
+  type PageSummary,
+  type ProjectSummary,
+} from "@/lib/wiki-shared";
 import { type HomepageSectionKey } from "@/lib/wiki-config";
 import { usePersonImage } from "@/client/use-person-image";
 
@@ -73,6 +77,88 @@ function PageChip({ page, index }: { page: PageSummary; index: number }) {
   );
 }
 
+const dayMs = 24 * 60 * 60 * 1000;
+
+function formatRelativeFromNow(timestamp: number | null): string | null {
+  if (timestamp === null) return null;
+  const diff = Date.now() - timestamp;
+  if (!Number.isFinite(diff)) return null;
+  if (diff < 0) {
+    const future = Math.abs(diff);
+    if (future < dayMs) return "today";
+    const days = Math.round(future / dayMs);
+    return days === 1 ? "in 1 day" : `in ${days} days`;
+  }
+  if (diff < dayMs) return "today";
+  const days = Math.round(diff / dayMs);
+  if (days < 14) return `${days}d ago`;
+  const weeks = Math.round(days / 7);
+  if (weeks < 8) return `${weeks}w ago`;
+  const months = Math.round(days / 30);
+  return `${months}mo ago`;
+}
+
+function formatDeadline(deadline: string | null): { label: string; tone: "future" | "soon" | "overdue" | "none" } {
+  if (!deadline) return { label: "no deadline", tone: "none" };
+  const parsed = Date.parse(deadline);
+  if (Number.isNaN(parsed)) return { label: deadline, tone: "future" };
+  const days = Math.round((parsed - Date.now()) / dayMs);
+  if (days < 0) return { label: `${Math.abs(days)}d overdue`, tone: "overdue" };
+  if (days === 0) return { label: "due today", tone: "soon" };
+  if (days <= 14) return { label: `due in ${days}d`, tone: "soon" };
+  return { label: deadline, tone: "future" };
+}
+
+const projectStatusAccents: Record<string, string> = {
+  active: "bg-[var(--teal-soft)] text-[#3e6978]",
+  "on-deck": "bg-[var(--peach-soft)] text-[#9a5a2f]",
+  "in-progress": "bg-[var(--lavender-soft)] text-[#5b4a7a]",
+};
+
+function ProjectCard({ project }: { project: ProjectSummary }) {
+  const status = (project.status ?? "").toLowerCase();
+  const statusClass =
+    projectStatusAccents[status] ?? "bg-[var(--muted)] text-[var(--muted-foreground)]";
+  const deadline = formatDeadline(project.deadline);
+  const deadlineToneClass =
+    deadline.tone === "overdue"
+      ? "text-[#b15454]"
+      : deadline.tone === "soon"
+        ? "text-[#9a5a2f]"
+        : "text-[var(--muted-foreground)]";
+  const lastTouched = formatRelativeFromNow(project.lastActivityAt);
+
+  return (
+    <Link
+      to={`/wiki/${project.slug}`}
+      className="surface hover-lift flex flex-col gap-2 rounded-2xl px-4 py-3.5 text-left"
+    >
+      <div className="flex items-start justify-between gap-2">
+        <p className="line-clamp-2 font-display text-[1rem] leading-tight text-[var(--foreground)]">
+          {project.title}
+        </p>
+        {project.status ? (
+          <span
+            className={`shrink-0 rounded-full px-2 py-0.5 text-[0.65rem] font-semibold uppercase tracking-wide ${statusClass}`}
+          >
+            {project.status}
+          </span>
+        ) : null}
+      </div>
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[0.72rem] text-[var(--muted-foreground)]">
+        {project.owner ? <span>@{project.owner}</span> : null}
+        <span className={deadlineToneClass}>{deadline.label}</span>
+        {lastTouched ? <span>· last touch {lastTouched}</span> : null}
+      </div>
+      {project.summary ? (
+        <p className="line-clamp-2 text-[0.78rem] leading-relaxed text-[var(--muted-foreground)]">
+          {project.summary}
+        </p>
+      ) : null}
+    </Link>
+  );
+}
+
 export function HomepageContent({
   homepage,
 }: {
@@ -81,7 +167,9 @@ export function HomepageContent({
   const config = useWikiConfig();
   const labels = config.homepage.labels;
   const orderedSections = config.homepage.sectionOrder.filter((section): section is HomepageSectionKey => {
-    return section !== "people" || homepage.people.length > 0;
+    if (section === "people") return homepage.people.length > 0;
+    if (section === "projects") return homepage.projectsOnDeck.length > 0;
+    return true;
   });
   const midpoint = Math.ceil(orderedSections.length / 2);
   const columns = [orderedSections.slice(0, midpoint), orderedSections.slice(midpoint)];
@@ -188,6 +276,21 @@ export function HomepageContent({
         </div>
       </div>
     ),
+    projects: homepage.projectsOnDeck.length > 0 ? (
+      <div>
+        <div className="mb-4 flex items-center gap-2">
+          <span className="h-2 w-2 rounded-full bg-[var(--teal)] shadow-[0_0_12px_var(--teal)]" />
+          <p className="text-[0.7rem] font-semibold uppercase tracking-[0.18em] text-[var(--muted-foreground)]">
+            {labels.projects}
+          </p>
+        </div>
+        <div className="grid grid-cols-1 gap-3">
+          {homepage.projectsOnDeck.map((project) => (
+            <ProjectCard key={project.file} project={project} />
+          ))}
+        </div>
+      </div>
+    ) : null,
   };
 
   return (

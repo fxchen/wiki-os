@@ -35,6 +35,27 @@ export interface WikiNeighbor {
   categories: string[];
 }
 
+export interface FolderSibling {
+  slug: string;
+  title: string;
+  file: string;
+  modifiedAt: number;
+  summary: string;
+}
+
+export interface WikiPageProject {
+  status: string | null;
+  owner: string | null;
+  deadline: string | null;
+  area: string | null;
+  updated: string | null;
+  tags: string[];
+  folder: string;
+  projectSlug: string;
+  lastActivityAt: number | null;
+  siblings: FolderSibling[];
+}
+
 export interface WikiPageData {
   slug: string;
   title: string;
@@ -47,6 +68,8 @@ export interface WikiPageData {
   neighbors: WikiNeighbor[];
   isPerson: boolean;
   personOverride: PersonOverrideValue | null;
+  isProjectIndex: boolean;
+  project: WikiPageProject | null;
 }
 
 export interface PageSummary {
@@ -66,6 +89,20 @@ export interface CategoryInfo {
   pages: PageSummary[];
 }
 
+export interface ProjectSummary {
+  file: string;
+  slug: string;
+  title: string;
+  summary: string;
+  status: string | null;
+  owner: string | null;
+  deadline: string | null;
+  area: string | null;
+  modifiedAt: number;
+  lastActivityAt: number;
+  folder: string;
+}
+
 export interface HomepageData {
   totalPages: number;
   totalWords: number;
@@ -74,6 +111,7 @@ export interface HomepageData {
   categories: CategoryInfo[];
   topConnected: PageSummary[];
   people: PageSummary[];
+  projectsOnDeck: ProjectSummary[];
 }
 
 export interface GraphNode {

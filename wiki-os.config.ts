@@ -4,6 +4,9 @@ const config: WikiOsConfigInput = {
   siteTitle: "WikiOS",
   tagline: "Plug-and-play Obsidian wiki for search, browsing, and local knowledge graphs.",
   searchPlaceholder: "Search notes, ideas, and people...",
+  navigation: {
+    headerLinks: [{ label: "Culture", href: "/wiki/CULTURE" }],
+  },
   homepage: {
     labels: {
       featured: "Discover",
@@ -14,6 +17,11 @@ const config: WikiOsConfigInput = {
   },
   people: {
     mode: "explicit",
+  },
+  projects: {
+    path: "Action/Projects",
+    activeStatuses: ["active", "on-deck", "in-progress"],
+    maxOnDeck: 8,
   },
 };
 

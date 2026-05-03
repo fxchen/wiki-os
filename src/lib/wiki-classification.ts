@@ -1,3 +1,4 @@
+import { extractLeadingMarkdownTitle } from "./markdown";
 import {
   formatTopicLabel,
   getTopicLabel,
@@ -7,6 +8,7 @@ import {
 import { normalizeRelativePath } from "./wiki-file-utils";
 import {
   slugFromFileName,
+  titleFromFileName,
   type PersonOverrideValue,
   type SearchMatch,
 } from "./wiki-shared";
@@ -451,6 +453,125 @@ export function detectPersonPage(
   }
 
   return detectPersonFromContentHeuristics(title, contentMarkdown);
+}
+
+export interface ProjectMetadata {
+  status: string | null;
+  owner: string | null;
+  deadline: string | null;
+  area: string | null;
+  updated: string | null;
+  tags: string[];
+  projectSlug: string;
+  folder: string;
+}
+
+function trimmedString(value: unknown): string | null {
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : null;
+  }
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    return value.toISOString().slice(0, 10);
+  }
+  return null;
+}
+
+export function getProjectFolderForFile(file: string, config: WikiOsConfig): string | null {
+  const projectsPath = config.projects.path;
+  if (!projectsPath) {
+    return null;
+  }
+
+  const normalizedFile = normalizeRelativePath(file);
+  const normalizedRoot = projectsPath.replace(/^\/+|\/+$/g, "");
+  const prefix = `${normalizedRoot}/`;
+
+  if (!normalizedFile.startsWith(prefix)) {
+    return null;
+  }
+
+  const remainder = normalizedFile.slice(prefix.length);
+  const segments = remainder.split("/");
+  if (segments.length < 2) {
+    return null;
+  }
+
+  return `${normalizedRoot}/${segments[0]}`;
+}
+
+export function deriveWikiPageTitle(
+  file: string,
+  body: string,
+  frontmatter: Record<string, unknown>,
+): string {
+  const frontmatterTitle = frontmatter.title;
+  if (typeof frontmatterTitle === "string" && frontmatterTitle.trim().length > 0) {
+    return frontmatterTitle.trim();
+  }
+
+  const normalized = normalizeRelativePath(file);
+  const segments = normalized.split("/");
+  const baseName = segments[segments.length - 1] ?? normalized;
+
+  if (baseName === "_index.md") {
+    const h1 = extractLeadingMarkdownTitle(body);
+    if (h1) {
+      return h1;
+    }
+
+    const folderName = segments[segments.length - 2];
+    if (folderName) {
+      const formatted = formatTopicLabel(folderName);
+      if (formatted) {
+        return formatted;
+      }
+    }
+  }
+
+  return titleFromFileName(file);
+}
+
+export function detectProjectIndexPage(file: string, config: WikiOsConfig): boolean {
+  const folder = getProjectFolderForFile(file, config);
+  if (!folder) {
+    return false;
+  }
+
+  const normalizedFile = normalizeRelativePath(file);
+  const indexFile = config.projects.indexFile;
+  return normalizedFile === `${folder}/${indexFile}`;
+}
+
+export function extractProjectMetadata(
+  file: string,
+  frontmatter: Record<string, unknown>,
+  config: WikiOsConfig,
+): ProjectMetadata | null {
+  const folder = getProjectFolderForFile(file, config);
+  if (!folder || !detectProjectIndexPage(file, config)) {
+    return null;
+  }
+
+  const normalizedRoot = config.projects.path.replace(/^\/+|\/+$/g, "");
+  const projectSlug = folder.slice(normalizedRoot.length + 1);
+
+  const statusKey = config.projects.statusFrontmatterKey;
+  const lookups = new Map<string, unknown>();
+  for (const [key, value] of Object.entries(frontmatter)) {
+    lookups.set(key.toLowerCase(), value);
+  }
+
+  return {
+    status: trimmedString(lookups.get(statusKey)),
+    owner: trimmedString(lookups.get("owner")),
+    deadline: trimmedString(lookups.get("deadline")),
+    area: trimmedString(lookups.get("area")),
+    updated: trimmedString(lookups.get("updated")),
+    tags: toStringArray(lookups.get("tags")),
+    projectSlug,
+    folder,
+  };
 }
 
 export function countTermOccurrences(content: string, term: string) {

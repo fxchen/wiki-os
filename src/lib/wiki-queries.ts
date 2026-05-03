@@ -8,13 +8,16 @@ import {
 import { getTopicEmoji, getTopicLabel, isTopicHidden, type WikiOsConfig } from "./wiki-config";
 import {
   type CategoryInfo,
+  type FolderSibling,
   type GraphData,
   type HomepageData,
   type PageSummary,
   type PersonOverrideValue,
+  type ProjectSummary,
   type SearchResult,
   type WikiHeading,
   type WikiPageData,
+  type WikiPageProject,
   type WikiStats,
   decodeSlugParts,
 } from "./wiki-shared";
@@ -123,6 +126,17 @@ interface PageRow {
   isPerson: number;
 }
 
+interface ProjectIndexRow {
+  file: string;
+  slug: string;
+  title: string;
+  summary: string;
+  modifiedAt: number;
+  projectMetadataJson: string | null;
+  projectFolder: string | null;
+  lastActivityAt: number;
+}
+
 interface SearchCandidate {
   file: string;
   title: string;
@@ -153,6 +167,14 @@ interface PageNeighborRow {
   categoryNamesJson: string;
 }
 
+interface FolderSiblingRow {
+  file: string;
+  slug: string;
+  title: string;
+  summary: string;
+  modifiedAt: number;
+}
+
 interface WikiPageRow {
   file: string;
   slug: string;
@@ -163,6 +185,44 @@ interface WikiPageRow {
   modifiedAt: number;
   categoryNamesJson: string;
   isPerson: number;
+  isProjectIndex: number;
+  projectMetadataJson: string | null;
+  projectFolder: string | null;
+}
+
+interface ParsedProjectMetadata {
+  status: string | null;
+  owner: string | null;
+  deadline: string | null;
+  area: string | null;
+  updated: string | null;
+  tags: string[];
+  projectSlug: string;
+  folder: string;
+}
+
+function parseProjectMetadataJson(value: string | null): ParsedProjectMetadata | null {
+  if (!value) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(value) as Partial<ParsedProjectMetadata> & {
+      tags?: unknown;
+    };
+    return {
+      status: typeof parsed.status === "string" ? parsed.status : null,
+      owner: typeof parsed.owner === "string" ? parsed.owner : null,
+      deadline: typeof parsed.deadline === "string" ? parsed.deadline : null,
+      area: typeof parsed.area === "string" ? parsed.area : null,
+      updated: typeof parsed.updated === "string" ? parsed.updated : null,
+      tags: Array.isArray(parsed.tags) ? parsed.tags.filter((tag): tag is string => typeof tag === "string") : [],
+      projectSlug: typeof parsed.projectSlug === "string" ? parsed.projectSlug : "",
+      folder: typeof parsed.folder === "string" ? parsed.folder : "",
+    };
+  } catch {
+    return null;
+  }
 }
 
 function toIsoString(value: number | null) {
@@ -204,6 +264,73 @@ function pickRandom<T>(items: T[], count: number): T[] {
     [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
   }
   return shuffled.slice(0, count);
+}
+
+function deadlineSortKey(value: string | null): string {
+  return value && value.trim().length > 0 ? value.trim() : "9999-99-99";
+}
+
+function loadProjectsOnDeck(db: SqliteDb, config: WikiOsConfig): ProjectSummary[] {
+  const rows = db
+    .prepare(`
+      SELECT
+        p.file AS file,
+        p.slug AS slug,
+        p.title AS title,
+        p.summary AS summary,
+        p.modified_at AS modifiedAt,
+        p.project_metadata_json AS projectMetadataJson,
+        p.project_folder AS projectFolder,
+        COALESCE(
+          (
+            SELECT MAX(sibling.modified_at)
+            FROM pages sibling
+            WHERE sibling.project_folder = p.project_folder
+          ),
+          p.modified_at
+        ) AS lastActivityAt
+      FROM pages p
+      WHERE p.is_project_index = 1
+    `)
+    .all() as ProjectIndexRow[];
+
+  const activeStatuses = new Set(config.projects.activeStatuses.map((s) => s.toLowerCase()));
+
+  const summaries: ProjectSummary[] = [];
+  for (const row of rows) {
+    const meta = parseProjectMetadataJson(row.projectMetadataJson);
+    if (!meta) {
+      continue;
+    }
+
+    if (activeStatuses.size > 0) {
+      if (!meta.status || !activeStatuses.has(meta.status.toLowerCase())) {
+        continue;
+      }
+    }
+
+    summaries.push({
+      file: row.file,
+      slug: row.slug,
+      title: row.title,
+      summary: row.summary,
+      status: meta.status,
+      owner: meta.owner,
+      deadline: meta.deadline,
+      area: meta.area,
+      modifiedAt: row.modifiedAt,
+      lastActivityAt: row.lastActivityAt,
+      folder: row.projectFolder ?? meta.folder,
+    });
+  }
+
+  summaries.sort((a, b) => {
+    const deadlineCompare = deadlineSortKey(a.deadline).localeCompare(deadlineSortKey(b.deadline));
+    if (deadlineCompare !== 0) return deadlineCompare;
+    return b.lastActivityAt - a.lastActivityAt;
+  });
+
+  return summaries.slice(0, config.projects.maxOnDeck);
 }
 
 export async function getDerivedData(deps: WikiQueryDependencies): Promise<DerivedData> {
@@ -327,6 +454,8 @@ export async function getDerivedData(deps: WikiQueryDependencies): Promise<Deriv
     .filter((page): page is PageSummary => page !== undefined)
     .sort((a, b) => b.backlinkCount - a.backlinkCount || a.title.localeCompare(b.title));
 
+  const projectsOnDeck = config.projects.path ? loadProjectsOnDeck(db, config) : [];
+
   const derivedData: DerivedData = {
     stats: {
       total_pages: totals.totalPages,
@@ -341,6 +470,7 @@ export async function getDerivedData(deps: WikiQueryDependencies): Promise<Deriv
       categories,
       topConnected,
       people,
+      projectsOnDeck,
     },
   };
 
@@ -523,7 +653,10 @@ export async function getWikiPage(
         headings_json AS headingsJson,
         modified_at AS modifiedAt,
         category_names_json AS categoryNamesJson,
-        is_person AS isPerson
+        is_person AS isPerson,
+        is_project_index AS isProjectIndex,
+        project_metadata_json AS projectMetadataJson,
+        project_folder AS projectFolder
       FROM pages
       WHERE slug = ?
     `)
@@ -569,6 +702,53 @@ export async function getWikiPage(
 
   const cache = deps.getCacheState();
 
+  let project: WikiPageProject | null = null;
+  if (row.isProjectIndex === 1) {
+    const meta = parseProjectMetadataJson(row.projectMetadataJson);
+    const folder = row.projectFolder ?? meta?.folder ?? null;
+
+    let siblings: FolderSibling[] = [];
+    let lastActivityAt: number | null = row.modifiedAt;
+
+    if (folder) {
+      const siblingRows = db
+        .prepare(`
+          SELECT file, slug, title, summary, modified_at AS modifiedAt
+          FROM pages
+          WHERE project_folder = ?
+            AND file != ?
+          ORDER BY modified_at DESC
+        `)
+        .all(folder, row.file) as FolderSiblingRow[];
+
+      siblings = siblingRows.map((sibling) => ({
+        file: sibling.file,
+        slug: sibling.slug,
+        title: sibling.title,
+        summary: sibling.summary,
+        modifiedAt: sibling.modifiedAt,
+      }));
+
+      const maxSiblingMtime = siblings[0]?.modifiedAt ?? null;
+      if (maxSiblingMtime !== null && maxSiblingMtime > row.modifiedAt) {
+        lastActivityAt = maxSiblingMtime;
+      }
+    }
+
+    project = {
+      status: meta?.status ?? null,
+      owner: meta?.owner ?? null,
+      deadline: meta?.deadline ?? null,
+      area: meta?.area ?? null,
+      updated: meta?.updated ?? null,
+      tags: meta?.tags ?? [],
+      folder: folder ?? "",
+      projectSlug: meta?.projectSlug ?? "",
+      lastActivityAt,
+      siblings,
+    };
+  }
+
   return {
     slug: row.slug,
     title: row.title,
@@ -581,6 +761,8 @@ export async function getWikiPage(
     neighbors,
     isPerson: row.isPerson === 1,
     personOverride: cache.personOverrides[row.file] ?? null,
+    isProjectIndex: row.isProjectIndex === 1,
+    project,
   };
 }
 

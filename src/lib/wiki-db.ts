@@ -2,7 +2,7 @@ import Database from "better-sqlite3";
 
 import { slugFromFileName, type WikiHeading } from "./wiki-shared";
 
-export const DEFAULT_WIKI_INDEX_CACHE_VERSION = 5;
+export const DEFAULT_WIKI_INDEX_CACHE_VERSION = 6;
 export const REQUIRED_INDEX_TABLES = ["pages", "backlinks", "categories", "pages_fts"] as const;
 
 export type SqliteDb = Database.Database;
@@ -10,6 +10,17 @@ export type SqliteDb = Database.Database;
 export interface BacklinkReferenceRecord {
   targetRaw: string;
   targetSlug: string;
+}
+
+export interface ProjectMetadataRecord {
+  status: string | null;
+  owner: string | null;
+  deadline: string | null;
+  area: string | null;
+  updated: string | null;
+  tags: string[];
+  projectSlug: string;
+  folder: string;
 }
 
 export interface IndexedWikiPageRecord {
@@ -28,6 +39,9 @@ export interface IndexedWikiPageRecord {
   modifiedAt: number;
   summary: string;
   isPerson: boolean;
+  isProjectIndex: boolean;
+  projectMetadata: ProjectMetadataRecord | null;
+  projectFolder: string | null;
 }
 
 export interface WikiDbCategorySeed {
@@ -167,7 +181,10 @@ export function runDbMigrations(db: SqliteDb, options: WikiDbMigrationOptions = 
       is_person INTEGER NOT NULL CHECK (is_person IN (0, 1)),
       kind TEXT NOT NULL CHECK (kind IN ('page', 'source', 'raw')),
       category_names_json TEXT NOT NULL,
-      backlink_count INTEGER NOT NULL DEFAULT 0
+      backlink_count INTEGER NOT NULL DEFAULT 0,
+      is_project_index INTEGER NOT NULL DEFAULT 0 CHECK (is_project_index IN (0, 1)),
+      project_metadata_json TEXT,
+      project_folder TEXT
     );
 
     CREATE TABLE IF NOT EXISTS backlinks (
@@ -181,6 +198,8 @@ export function runDbMigrations(db: SqliteDb, options: WikiDbMigrationOptions = 
     CREATE INDEX IF NOT EXISTS idx_pages_kind ON pages(kind);
     CREATE INDEX IF NOT EXISTS idx_pages_modified ON pages(modified_at DESC);
     CREATE INDEX IF NOT EXISTS idx_pages_backlink ON pages(backlink_count DESC, modified_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_pages_project_folder ON pages(project_folder);
+    CREATE INDEX IF NOT EXISTS idx_pages_is_project_index ON pages(is_project_index);
     CREATE INDEX IF NOT EXISTS idx_backlinks_target_slug ON backlinks(target_slug);
 
     CREATE TABLE IF NOT EXISTS categories (
@@ -338,8 +357,11 @@ export function upsertPageRecord(db: SqliteDb, page: IndexedWikiPageRecord) {
         summary,
         is_person,
         kind,
-        category_names_json
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'page', ?)
+        category_names_json,
+        is_project_index,
+        project_metadata_json,
+        project_folder
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'page', ?, ?, ?, ?)
       ON CONFLICT(file) DO UPDATE SET
         slug = excluded.slug,
         title = excluded.title,
@@ -354,7 +376,10 @@ export function upsertPageRecord(db: SqliteDb, page: IndexedWikiPageRecord) {
         summary = excluded.summary,
         is_person = excluded.is_person,
         kind = 'page',
-        category_names_json = excluded.category_names_json
+        category_names_json = excluded.category_names_json,
+        is_project_index = excluded.is_project_index,
+        project_metadata_json = excluded.project_metadata_json,
+        project_folder = excluded.project_folder
     `).run(
       page.file,
       page.slug,
@@ -370,6 +395,9 @@ export function upsertPageRecord(db: SqliteDb, page: IndexedWikiPageRecord) {
       page.summary,
       page.isPerson ? 1 : 0,
       JSON.stringify(page.categoryNames),
+      page.isProjectIndex ? 1 : 0,
+      page.projectMetadata ? JSON.stringify(page.projectMetadata) : null,
+      page.projectFolder,
     );
 
     const basenameMap = buildBasenameSlugMap(db);

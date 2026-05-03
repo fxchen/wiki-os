@@ -385,6 +385,103 @@ describe("wiki snapshot", () => {
     }
   });
 
+  it("surfaces active projects on-deck and folder activity on the project page", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "wiki-ui-"));
+
+    try {
+      await mkdir(path.join(root, "Action", "Projects", "alpha"), { recursive: true });
+      await mkdir(path.join(root, "Action", "Projects", "beta"), { recursive: true });
+      await mkdir(path.join(root, "Action", "Projects", "gamma"), { recursive: true });
+
+      await writeFile(
+        path.join(root, "Action", "Projects", "alpha", "_index.md"),
+        [
+          "---",
+          "status: active",
+          "owner: frank",
+          "deadline: 2099-01-15",
+          "area: tech",
+          "---",
+          "",
+          "# Alpha",
+          "",
+          "Alpha project hub doc with a long summary line that meets the threshold for inclusion.",
+          "",
+        ].join("\n"),
+      );
+      await writeFile(
+        path.join(root, "Action", "Projects", "alpha", "research.md"),
+        "# Alpha research\n\nNotes about the alpha workstream and discoveries we made along the way.\n",
+      );
+      await writeFile(
+        path.join(root, "Action", "Projects", "alpha", "build-log.md"),
+        "# Alpha build log\n\nDay-by-day log of progress on the alpha implementation work.\n",
+      );
+
+      await writeFile(
+        path.join(root, "Action", "Projects", "beta", "_index.md"),
+        [
+          "---",
+          "status: on-deck",
+          "owner: ada",
+          "deadline: 2099-01-05",
+          "---",
+          "",
+          "# Beta",
+          "",
+          "Beta project queued up next, summary content for indexing purposes here.",
+          "",
+        ].join("\n"),
+      );
+
+      await writeFile(
+        path.join(root, "Action", "Projects", "gamma", "_index.md"),
+        [
+          "---",
+          "status: archived",
+          "---",
+          "",
+          "# Gamma",
+          "",
+          "Gamma archived hub doc that should not appear in projectsOnDeck.",
+          "",
+        ].join("\n"),
+      );
+
+      const wiki = await loadWikiModule(root, {
+        configInput: {
+          projects: {
+            path: "Action/Projects",
+            activeStatuses: ["active", "on-deck"],
+          },
+        },
+      });
+
+      const homepage = await wiki.getHomepageData();
+      const slugs = homepage.projectsOnDeck.map((p) => p.slug);
+      expect(slugs).toEqual(["Action/Projects/beta/_index", "Action/Projects/alpha/_index"]);
+      expect(homepage.projectsOnDeck.map((p) => p.title)).toEqual(["Beta", "Alpha"]);
+      expect(homepage.projectsOnDeck.find((p) => p.slug.endsWith("alpha/_index"))).toMatchObject({
+        title: "Alpha",
+        status: "active",
+        owner: "frank",
+        deadline: "2099-01-15",
+        area: "tech",
+      });
+
+      const alpha = await wiki.getWikiPage(["Action", "Projects", "alpha", "_index"]);
+      expect(alpha.title).toBe("Alpha");
+      expect(alpha.isProjectIndex).toBe(true);
+      expect(alpha.project?.status).toBe("active");
+      expect(alpha.project?.siblings.map((s) => s.title).sort()).toEqual([
+        "build-log",
+        "research",
+      ]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("applies local per-vault person overrides without editing the vault", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "wiki-ui-"));
     const setupConfigPath = path.join(root, ".wiki-os-config.json");

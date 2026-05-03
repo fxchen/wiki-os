@@ -5,9 +5,12 @@ import {
 } from "./wiki-config";
 import {
   deriveCategoryNames,
+  deriveWikiPageTitle,
   detectPersonPage,
   extractBacklinkReferences,
+  extractProjectMetadata,
   extractSummary,
+  getProjectFolderForFile,
 } from "./wiki-classification";
 import {
   getWikiEnvironmentConfig,
@@ -217,6 +220,7 @@ const indexer = createWikiIndexer<SqliteDb, WikiOsConfig>({
   shouldIndexRelativeFile,
   getWikiEnvironmentConfig,
   titleFromFileName,
+  deriveWikiPageTitle,
   slugFromFileName,
   parseWikiFrontmatter,
   prepareWikiMarkdown,
@@ -230,6 +234,8 @@ const indexer = createWikiIndexer<SqliteDb, WikiOsConfig>({
       config,
       wikiCache.personOverrides[file] ?? null,
     ),
+  extractProjectMetadata,
+  getProjectFolderForFile,
   extractBacklinkReferences,
   extractSummary,
   requireDb,
