@@ -13,7 +13,13 @@ import remarkGfm from "remark-gfm";
 
 import { useWikiConfig } from "@/client/wiki-config";
 import { getTopicColor, type TopicAliasConfig } from "@/lib/wiki-config";
-import type { WikiHeading, WikiNeighbor, WikiPageData } from "@/lib/wiki-shared";
+import type {
+  FolderSibling,
+  WikiHeading,
+  WikiNeighbor,
+  WikiPageData,
+  WikiPageProject,
+} from "@/lib/wiki-shared";
 import { usePersonImage } from "@/client/use-person-image";
 
 import { fetchJson, isSetupRequiredResponse } from "../api";
@@ -53,6 +59,101 @@ function formatDate(timestamp: number) {
     day: "numeric",
     year: "numeric",
   });
+}
+
+const projectStatusToneMap: Record<string, string> = {
+  active: "bg-[var(--teal-soft)] text-[#3e6978]",
+  "on-deck": "bg-[var(--peach-soft)] text-[#9a5a2f]",
+  "in-progress": "bg-[var(--lavender-soft)] text-[#5b4a7a]",
+  done: "bg-[var(--muted)] text-[var(--muted-foreground)]",
+  archived: "bg-[var(--muted)] text-[var(--muted-foreground)]",
+};
+
+function projectStatusClass(status: string | null) {
+  if (!status) return "bg-[var(--muted)] text-[var(--muted-foreground)]";
+  return projectStatusToneMap[status.toLowerCase()] ?? "bg-[var(--muted)] text-[var(--muted-foreground)]";
+}
+
+function deadlineLabel(deadline: string | null): { label: string; tone: "future" | "soon" | "overdue" | "none" } {
+  if (!deadline) return { label: "no deadline", tone: "none" };
+  const parsed = Date.parse(deadline);
+  if (Number.isNaN(parsed)) return { label: deadline, tone: "future" };
+  const days = Math.round((parsed - Date.now()) / (24 * 60 * 60 * 1000));
+  if (days < 0) return { label: `${Math.abs(days)}d overdue`, tone: "overdue" };
+  if (days === 0) return { label: "due today", tone: "soon" };
+  if (days <= 14) return { label: `due in ${days}d`, tone: "soon" };
+  return { label: deadline, tone: "future" };
+}
+
+function ProjectHeader({ project }: { project: WikiPageProject }) {
+  const deadline = deadlineLabel(project.deadline);
+  const deadlineTone =
+    deadline.tone === "overdue"
+      ? "text-[#b15454]"
+      : deadline.tone === "soon"
+        ? "text-[#9a5a2f]"
+        : "text-[var(--muted-foreground)]";
+
+  return (
+    <div className="mb-6 flex flex-wrap items-center gap-2 text-xs sm:mb-10">
+      {project.status && (
+        <span
+          className={`rounded-full px-2.5 py-1 font-semibold uppercase tracking-wide ${projectStatusClass(project.status)}`}
+        >
+          {project.status}
+        </span>
+      )}
+      {project.owner && (
+        <span className="rounded-full border border-[var(--border)] bg-white px-2.5 py-1 text-[var(--muted-foreground)]">
+          owner @{project.owner}
+        </span>
+      )}
+      <span
+        className={`rounded-full border border-[var(--border)] bg-white px-2.5 py-1 ${deadlineTone}`}
+      >
+        {deadline.label}
+      </span>
+      {project.area && (
+        <span className="rounded-full border border-[var(--border)] bg-white px-2.5 py-1 text-[var(--muted-foreground)]">
+          area · {project.area}
+        </span>
+      )}
+    </div>
+  );
+}
+
+function ProjectActivity({ siblings }: { siblings: FolderSibling[] }) {
+  return (
+    <section id="project-activity" className="mt-10 scroll-mt-20">
+      <h2 className="font-display mb-4 border-b border-[var(--border)] pb-2 text-xl font-light text-[var(--foreground)]">
+        Project activity
+      </h2>
+      <ul className="space-y-2">
+        {siblings.map((sibling) => (
+          <li key={sibling.file}>
+            <Link
+              to={`/wiki/${sibling.slug}`}
+              className="surface hover-lift flex items-center justify-between gap-3 rounded-xl px-4 py-3 text-left"
+            >
+              <div className="min-w-0">
+                <p className="truncate font-display text-[0.95rem] text-[var(--foreground)]">
+                  {sibling.title}
+                </p>
+                {sibling.summary && (
+                  <p className="line-clamp-1 text-[0.78rem] text-[var(--muted-foreground)]">
+                    {sibling.summary}
+                  </p>
+                )}
+              </div>
+              <span className="shrink-0 text-[0.7rem] text-[var(--muted-foreground)]">
+                {formatDate(sibling.modifiedAt)}
+              </span>
+            </Link>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
 }
 
 function estimateReadingTime(markdown: string) {
@@ -519,6 +620,15 @@ export function Component() {
           {config.siteTitle}
         </Link>
         <div className="flex items-center gap-1.5 sm:gap-2.5">
+          {config.navigation.headerLinks.map((link) => (
+            <Link
+              key={link.href}
+              to={link.href}
+              className="surface rounded-full px-3.5 py-2 text-sm font-medium text-[var(--foreground)] transition-[transform] duration-200 ease-[cubic-bezier(0.23,1,0.32,1)] active:scale-[0.96] sm:px-4"
+            >
+              {link.label}
+            </Link>
+          ))}
           <Link
             to="/graph"
             className="surface rounded-full px-3.5 py-2 text-sm font-medium text-[var(--foreground)] transition-[transform] duration-200 ease-[cubic-bezier(0.23,1,0.32,1)] active:scale-[0.96] sm:px-4"
@@ -610,6 +720,9 @@ export function Component() {
           </div>
         </div>
 
+        {/* Project header */}
+        {page.isProjectIndex && page.project && <ProjectHeader project={page.project} />}
+
         {/* Mobile TOC */}
         {filteredHeadings.length > 0 && (
           <div className="mb-6 lg:hidden rounded-lg border border-[var(--border)] bg-white px-4 py-3">
@@ -645,6 +758,11 @@ export function Component() {
               {mainContent}
             </ReactMarkdown>
           </article>
+
+          {/* Project folder activity */}
+          {page.isProjectIndex && page.project && page.project.siblings.length > 0 && (
+            <ProjectActivity siblings={page.project.siblings} />
+          )}
 
           {/* Related Concepts as chips */}
           {relatedLinks.length > 0 && (

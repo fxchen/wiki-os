@@ -24,7 +24,10 @@ export function shouldIndexRelativeFile(file: string) {
   }
 
   const baseName = parts[parts.length - 1];
-  if (baseName.startsWith("_") || baseName.startsWith(".")) {
+  if (baseName.startsWith(".")) {
+    return false;
+  }
+  if (baseName.startsWith("_") && baseName !== "_index.md") {
     return false;
   }
 

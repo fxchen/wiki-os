@@ -8,6 +8,17 @@ export interface BacklinkReference {
   targetSlug: string;
 }
 
+export interface IndexedProjectMetadata {
+  status: string | null;
+  owner: string | null;
+  deadline: string | null;
+  area: string | null;
+  updated: string | null;
+  tags: string[];
+  projectSlug: string;
+  folder: string;
+}
+
 export interface IndexedWikiPage {
   file: string;
   slug: string;
@@ -24,6 +35,9 @@ export interface IndexedWikiPage {
   modifiedAt: number;
   summary: string;
   isPerson: boolean;
+  isProjectIndex: boolean;
+  projectMetadata: IndexedProjectMetadata | null;
+  projectFolder: string | null;
 }
 
 export interface ReconcileStats {
@@ -60,6 +74,11 @@ export interface WikiIndexerPageDependencies<TConfig = unknown>
   extends WikiIndexerRuntimeDependencies {
   getWikiEnvironmentConfig: () => Promise<TConfig>;
   titleFromFileName: (file: string) => string;
+  deriveWikiPageTitle: (
+    file: string,
+    body: string,
+    frontmatter: Record<string, unknown>,
+  ) => string;
   slugFromFileName: (file: string) => string;
   parseWikiFrontmatter: (markdown: string) => ParsedWikiFrontmatter;
   prepareWikiMarkdown: (markdown: string) => PreparedWikiMarkdown;
@@ -77,6 +96,12 @@ export interface WikiIndexerPageDependencies<TConfig = unknown>
     frontmatter: Record<string, unknown>,
     config: TConfig,
   ) => boolean;
+  extractProjectMetadata: (
+    file: string,
+    frontmatter: Record<string, unknown>,
+    config: TConfig,
+  ) => IndexedProjectMetadata | null;
+  getProjectFolderForFile: (file: string, config: TConfig) => string | null;
   extractBacklinkReferences: (markdown: string) => BacklinkReference[];
   extractSummary: (markdown: string) => string;
 }
@@ -191,9 +216,9 @@ export async function loadIndexedWikiPage<TConfig>(
     ]);
 
     const config = await deps.getWikiEnvironmentConfig();
-    const title = deps.titleFromFileName(file);
-    const titleLower = title.toLowerCase();
     const { data: frontmatter, body } = deps.parseWikiFrontmatter(markdown);
+    const title = deps.deriveWikiPageTitle(file, body, frontmatter);
+    const titleLower = title.toLowerCase();
     const prepared = deps.prepareWikiMarkdown(body);
     const categoryNames = deps.deriveCategoryNames(
       file,
@@ -209,6 +234,8 @@ export async function loadIndexedWikiPage<TConfig>(
       frontmatter,
       config,
     );
+    const projectMetadata = deps.extractProjectMetadata(file, frontmatter, config);
+    const projectFolder = projectMetadata?.folder ?? deps.getProjectFolderForFile(file, config);
 
     return {
       file,
@@ -226,6 +253,9 @@ export async function loadIndexedWikiPage<TConfig>(
       modifiedAt,
       summary: deps.extractSummary(prepared.contentMarkdown),
       isPerson,
+      isProjectIndex: projectMetadata !== null,
+      projectMetadata,
+      projectFolder,
     };
   } catch (error) {
     if (isMissingPathError(error)) {

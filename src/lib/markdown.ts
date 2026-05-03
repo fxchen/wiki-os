@@ -132,6 +132,18 @@ export function stripLeadingMarkdownTitle(markdown: string) {
   return markdown.replace(/^#\s+.+\n?/, "").trimStart();
 }
 
+export function extractLeadingMarkdownTitle(body: string): string | null {
+  const trimmed = body.trimStart();
+  const firstLine = trimmed.split("\n", 1)[0] ?? "";
+  const match = firstLine.match(/^#\s+(.+)$/);
+  if (!match) return null;
+  const cleaned = match[1]
+    .replace(/\*\*/g, "")
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+    .trim();
+  return cleaned.length > 0 ? cleaned : null;
+}
+
 export function createHeadingId(text: string) {
   return text.toLowerCase().replace(/[^\w\s-]/g, "").replace(/\s+/g, "-");
 }
