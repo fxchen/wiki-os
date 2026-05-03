@@ -24,6 +24,34 @@ git clone https://github.com/Ansub/wiki-os.git wiki-os && cd wiki-os && npm run 
 
 WikiOS will open in your browser and guide you through choosing a vault. You can also use the bundled demo vault on first run.
 
+### Skill: clone and run with Claude
+
+If you'd rather have an AI agent (Claude Code, Cursor, etc.) do the setup, paste the prompt below into the agent from the folder you keep code in (`~/code`, `~/dev`, wherever). Fill in the two blanks — vault path and clone target — and the agent will check out this repo and start the server pointed at your vault.
+
+````
+Run WikiOS pointed at my Obsidian vault.
+
+Vault path:   <FILL IN>        # e.g. ~/Documents/MyVault
+                               # If blank, ask me before doing anything.
+Clone into:   <FILL IN OR ".">  # e.g. ~/code, or "." for current directory.
+
+Steps:
+1. Confirm `node --version` is ≥ 20 and `git --version` works. If either is missing, stop and tell me what's missing.
+2. cd to the clone target. If a wiki-os/ folder is already there, run `git pull` instead of cloning. Otherwise:
+     git clone https://github.com/fxchen/wiki-os.git
+3. cd wiki-os
+4. Start it pointed at my vault — this installs deps, builds, serves, and auto-opens the browser:
+     WIKI_ROOT="<vault path>" npm run first-run
+5. Wait for the "Server listening" log line. The browser should auto-open to http://localhost:5211.
+
+Notes:
+- WikiOS only READS the vault. The SQLite index lives in ~/.wiki-os/indexes/, never inside the vault.
+- Stop with Ctrl+C. Re-run later with `WIKI_ROOT="<path>" npm start` from the wiki-os folder.
+- Skip the WIKI_ROOT env var to use the in-app vault picker instead.
+
+If any step fails, paste the actual error before suggesting a fix — don't guess.
+````
+
 ## Features
 
 - Homepage with featured notes, recent notes, and people highlights
