@@ -24,6 +24,34 @@ git clone https://github.com/Ansub/wiki-os.git wiki-os && cd wiki-os && npm run 
 
 WikiOS will open in your browser and guide you through choosing a vault. You can also use the bundled demo vault on first run.
 
+### Skill: clone and run with Claude
+
+If you'd rather have an AI agent (Claude Code, Cursor, etc.) do the setup, paste the prompt below into the agent from the folder you keep code in (`~/code`, `~/dev`, wherever). Fill in the two blanks — vault path and clone target — and the agent will check out this repo and start the server pointed at your vault.
+
+````
+Run WikiOS pointed at my Obsidian vault.
+
+Vault path:   <FILL IN>        # e.g. ~/Documents/MyVault
+                               # If blank, ask me before doing anything.
+Clone into:   <FILL IN OR ".">  # e.g. ~/code, or "." for current directory.
+
+Steps:
+1. Confirm `node --version` is ≥ 20 and `git --version` works. If either is missing, stop and tell me what's missing.
+2. cd to the clone target. If a wiki-os/ folder is already there, run `git pull` instead of cloning. Otherwise:
+     git clone https://github.com/fxchen/wiki-os.git
+3. cd wiki-os
+4. Start it pointed at my vault — this installs deps, builds, serves, and auto-opens the browser:
+     WIKI_ROOT="<vault path>" npm run first-run
+5. Wait for the "Server listening" log line. The browser should auto-open to http://localhost:5211.
+
+Notes:
+- WikiOS only READS the vault. The SQLite index lives in ~/.wiki-os/indexes/, never inside the vault.
+- Stop with Ctrl+C. Re-run later with `WIKI_ROOT="<path>" npm start` from the wiki-os folder.
+- Skip the WIKI_ROOT env var to use the in-app vault picker instead.
+
+If any step fails, paste the actual error before suggesting a fix — don't guess.
+````
+
 ## Features
 
 - Homepage with featured notes, recent notes, and people highlights
@@ -138,6 +166,97 @@ You can customize this in `wiki-os.config.ts` with `people.mode`:
 - `off` hides People entirely
 
 Local person overrides are saved in `~/.wiki-os/config.json` and do not rewrite your notes.
+
+### Projects on-deck
+
+WikiOS can surface a "Projects on-deck" section on the homepage, sourced from a folder of project hub notes. Each project is a subfolder containing an `_index.md` whose frontmatter drives the card. Sibling files in the same folder show up as "Project activity" on the hub page.
+
+**Folder shape:**
+
+```
+Action/Projects/
+  alpha/
+    _index.md      # project hub — drives the on-deck card
+    research.md    # sibling files surface as "Project activity" on the hub
+    build-log.md
+  beta/
+    _index.md
+```
+
+**`_index.md` frontmatter:**
+
+```yaml
+---
+status: active           # filtered by projects.activeStatuses
+owner: frank
+deadline: 2026-08-15     # ISO date; cards sort by deadline then last activity
+area: tech               # optional grouping
+---
+```
+
+**`wiki-os.config.ts`:**
+
+```ts
+projects: {
+  path: "Action/Projects",                              // empty string disables the section
+  indexFile: "_index.md",
+  activeStatuses: ["active", "on-deck", "in-progress"],
+  statusFrontmatterKey: "status",
+  maxOnDeck: 6,
+},
+navigation: {
+  headerLinks: [
+    { label: "Culture", href: "/wiki/CULTURE" },        // pinned to the top bar
+  ],
+},
+```
+
+#### Adopting this for an ARKS vault
+
+If your vault follows the ARKS convention (`Action/`, `Resources/`, `Knowledge/`, `sources/`), paste the prompt below into Claude Code (or any LLM with vault access) to retrofit existing project notes into the layout this feature expects:
+
+````
+You're retrofitting my Obsidian vault to work with WikiOS's "Projects on-deck"
+homepage section.
+
+My vault follows ARKS (Action/, Resources/, Knowledge/, sources/). Projects live
+under Action/Projects/. Today they're a mix of:
+- Flat files:  Action/Projects/<name>.md
+- Folders:     Action/Projects/<name>/...
+
+WikiOS expects each project to be a folder containing an _index.md hub:
+  Action/Projects/<slug>/_index.md
+
+Sibling .md files inside that folder appear as "Project activity" on the hub.
+
+The _index.md frontmatter drives the homepage card:
+  ---
+  status: active | on-deck | in-progress | done | archived
+  owner: <person>
+  deadline: YYYY-MM-DD     (optional; cards sort by deadline)
+  area: <grouping>         (optional)
+  ---
+
+Do this:
+1. List every project under Action/Projects/ — both flat files and folders.
+2. For flat project files, move them to Action/Projects/<kebab-slug>/_index.md,
+   preserving content.
+3. For folder projects without an _index.md, identify the hub note (root-level
+   note, name matches folder, or longest content) and rename it to _index.md.
+   Ask me if it's ambiguous.
+4. For each _index.md, ensure frontmatter has at least `status`. If missing,
+   infer:
+     - active     → edited within the last 14 days
+     - on-deck    → has open TODOs but no recent edits
+     - archived   → explicit "done" or "archived" tag/frontmatter
+   Ask before applying any inferred status.
+5. Don't touch anything outside Action/Projects/.
+6. Show a summary table (project · status · changes) before applying.
+
+After this runs, set `projects.path: "Action/Projects"` in wiki-os.config.ts.
+````
+
+If your projects live elsewhere (e.g. `2-Areas/Projects/` for PARA, or the vault root), edit both the prompt and `projects.path` to match.
 
 ## License
 
